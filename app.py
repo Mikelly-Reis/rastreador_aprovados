@@ -2,7 +2,23 @@ import streamlit as st
 
 from streamlit_extras.stylable_container import stylable_container
 
+import rastreador_aprovados as backend
 
+if "df_resultado_conferencia" not in st.session_state:
+    st.session_state.df_resultado_conferencia = None
+
+if "df_resultado_conversao" not in st.session_state:
+    st.session_state.df_resultado_conversao = None
+
+def realiza_conferencia():
+   st.session_state.df_resultado_conferencia = backend.processar_conferencia(
+        arquivo_lista_alunos,
+        arquivo_lista_vestibular,
+        st.session_state.opcao == "Nome + CPF"
+    )
+
+def converte_para_tabela():
+   st.session_state.df_resultado_conversao = backend.extrair_tabela_pdf(arquivo_tabela_pdf)
 
 st.set_page_config(
     page_title="Rastreador",
@@ -158,7 +174,8 @@ with tab1:
         st.radio(
     "Método:",
     ["Nome Completo", "Nome + CPF"],
-    horizontal=True
+    horizontal=True,
+    key="opcao",
 )
 
         col1, col2 = st.columns(2)
@@ -166,16 +183,21 @@ with tab1:
         with col1:
     
          st.markdown('<h2 style="color:white; padding:5px; font-size: 15px; text-align: center;  ">🧑‍🏫Lista de Alunos</h2>', unsafe_allow_html=True)
-         st.file_uploader("Arquivo 1", type=["csv", "xlsx"], key="a1", label_visibility="collapsed")
+         arquivo_lista_alunos = st.file_uploader("Arquivo 1", type=["csv", "xlsx"], key="a1", label_visibility="collapsed")
 
         with col2:
          st.markdown('<h2 style="color:white; padding:5px; font-size: 15px; text-align: center;  ">📑Lista do Vestibular</h2>', unsafe_allow_html=True)
-         st.file_uploader("Arquivo 2", type=["csv", "xlsx"], key="a2", label_visibility="collapsed")
+         arquivo_lista_vestibular = st.file_uploader("Arquivo 2", type=["csv", "xlsx"], key="a2", label_visibility="collapsed")
     
 
          col_vazia, col_botao = st.columns([2, 1])
          with col_botao:
-          st.button("Buscar")
+          st.button("Buscar", on_click=realiza_conferencia)
+
+        df_bottom_conferencia = st.empty()
+        if st.session_state.df_resultado_conferencia is not None:
+            df_bottom_conferencia.dataframe(st.session_state.df_resultado_conferencia)
+
 
 
 with tab2:
@@ -195,8 +217,12 @@ with tab2:
         st.markdown('<h7 style="color:white; padding:0; font-size: 15px; text-align: left; margin-top: 10px; ">Use isso para converter listas de aprovados que estão no formato PDF.<br> O sistema tentará criar um arquivo organizado no formato padrão do Excel.</h7>', unsafe_allow_html=True)
 
         st.markdown('<h2 style="color:white; padding:5px; font-size: 15px; text-align: center;  ">🗂️</h2>', unsafe_allow_html=True)
-        st.file_uploader("PDF", type=["pdf"],  label_visibility="collapsed", key="conv_pdf")
+        arquivo_tabela_pdf = st.file_uploader("PDF", type=["pdf"],  label_visibility="collapsed", key="conv_pdf")
 
         col_vazia2, col_botao2 = st.columns([2, 1])
         with col_botao2:
-         st.button("Converter para Excel", key= "btn_tb2")
+         st.button("Converter para Tabela", key= "btn_tb2", on_click=converte_para_tabela)
+    
+        df_bottom_conversao = st.empty()
+        if st.session_state.df_resultado_conversao is not None:
+            df_bottom_conversao.dataframe(st.session_state.df_resultado_conversao)       
