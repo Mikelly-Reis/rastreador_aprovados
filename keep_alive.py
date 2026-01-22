@@ -1,6 +1,6 @@
 import requests
 
-url = "https://rastreador-aprovados-cpe.streamlit.app/"
+url = "https://rastreador-aprovados.streamlit.app/"
 
 try:
     response = requests.get(url)
