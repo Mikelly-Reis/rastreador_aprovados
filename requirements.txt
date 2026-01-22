@@ -5,3 +5,5 @@ xlsxwriter
 rapidfuzz
 unidecode
 tqdm
+streamlit_extras
+pypdf
