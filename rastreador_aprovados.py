@@ -4,7 +4,7 @@ import io
 import pdfplumber
 from rapidfuzz import process, fuzz
 from unidecode import unidecode
-from pypdf import PdfReader # Mantido para funções legadas se necessário
+from pypdf import PdfReader 
 
 # ==========================================
 # FUNÇÕES DE LIMPEZA E UTILITÁRIOS
@@ -15,7 +15,7 @@ def normalizar_texto(texto):
     if pd.isna(texto) or texto == "":
         return ""
     texto_limpo = unidecode(str(texto).upper())
-    # Substitui quebras de linha por espaço
+    # Substitui quebras de linha por espaço para evitar quebra de nomes
     texto_limpo = texto_limpo.replace('\n', ' ')
     return re.sub(r'\s+', ' ', texto_limpo).strip()
 
@@ -25,14 +25,25 @@ def limpar_numeros(valor):
         return ""
     return re.sub(r'\D', '', str(valor))
 
-def extrair_miolo_cpf(cpf):
-    """Pega os 6 dígitos centrais do CPF para validação contextual."""
+def obter_fragmentos_cpf(cpf):
+    """
+    Gera uma lista com as 4 partes do CPF para tentar encontrar
+    qualquer uma delas na lista oficial.
+    Retorna: [Parte1, Parte2, Parte3, Digitos]
+    """
     cpf_limpo = limpar_numeros(cpf)
-    if len(cpf_limpo) < 9:
-        return None
-    # Geralmente listas escondem os 3 primeiros e 2 últimos (***.123.456-**)
-    # Pegamos do índice 3 ao 9
-    return cpf_limpo[3:9]
+    
+    # CPF precisa ter 11 dígitos para essa lógica funcionar bem
+    if len(cpf_limpo) < 11:
+        return []
+    
+    fragmentos = [
+        cpf_limpo[0:3],   # 123.***
+        cpf_limpo[3:6],   # ***.456.***
+        cpf_limpo[6:9],   # ***.***.789
+        cpf_limpo[9:11]   # ***-00 (Final)
+    ]
+    return fragmentos
 
 def carregar_dataframe(arquivo):
     """Lê CSV ou Excel e retorna DataFrame."""
@@ -54,7 +65,6 @@ def identificar_colunas(df):
     keywords_nome = ['nome', 'candidato', 'aluno', 'estudante']
     col_nome = next((df.columns[i] for i, c in enumerate(cols_lower) if any(k in c for k in keywords_nome)), None)
     if not col_nome:
-        # Pega a primeira coluna de texto se não achar
         cols_texto = df.select_dtypes(include=['object']).columns
         col_nome = cols_texto[0] if len(cols_texto) > 0 else df.columns[0]
 
@@ -65,14 +75,13 @@ def identificar_colunas(df):
     return col_nome, col_cpf
 
 # ==========================================
-# LÓGICA NOVA: PROCESSAMENTO DE PDF (TEXTO CORRIDO)
+# LÓGICA DE BUSCA EM PDF (BAG OF WORDS)
 # ==========================================
 
 def carregar_texto_pdf(arquivo_pdf):
     """Extrai todo o texto do PDF como uma única string gigante normalizada."""
     texto_completo = ""
     try:
-        # pdfplumber lida bem com file-like objects do Streamlit
         with pdfplumber.open(arquivo_pdf) as pdf:
             for page in pdf.pages:
                 texto_pagina = page.extract_text()
@@ -84,17 +93,15 @@ def carregar_texto_pdf(arquivo_pdf):
 
 def buscar_em_texto_corrido(df_alunos, texto_pdf_norm, col_nome, col_cpf, usar_validacao_cpf):
     resultados = []
-    
     total_chars = len(texto_pdf_norm)
 
     for idx, row in df_alunos.iterrows():
         nome_original = row[col_nome]
         nome_busca = normalizar_texto(nome_original)
         
-        if len(nome_busca) < 4: continue # Ignora nomes muito curtos
+        if len(nome_busca) < 4: continue 
 
-        # 1. Busca Exata (Substring)
-        # O PDF é tratado como um textão. Procuramos se "SABRINA CRISTAN" está lá dentro.
+        # 1. Busca Exata do Nome
         index_encontrado = texto_pdf_norm.find(nome_busca)
         
         match_encontrado = False
@@ -106,48 +113,54 @@ def buscar_em_texto_corrido(df_alunos, texto_pdf_norm, col_nome, col_cpf, usar_v
             match_encontrado = True
             score = 100
             
-            # Validação Contextual
+            # 2. Validação Contextual por CPF (Multi-fragmento)
             if usar_validacao_cpf and col_cpf:
                 cpf_aluno = row[col_cpf]
-                miolo_cpf = extrair_miolo_cpf(cpf_aluno)
+                fragmentos = obter_fragmentos_cpf(cpf_aluno)
                 
-                if miolo_cpf:
-                    # Cria uma "janela" de texto ao redor do nome (ex: 60 chars antes e depois)
-                    inicio_ctx = max(0, index_encontrado - 60)
-                    fim_ctx = min(total_chars, index_encontrado + len(nome_busca) + 60)
+                if fragmentos:
+                    # Cria janela de contexto (ex: 50 caracteres antes e depois do nome)
+                    inicio_ctx = max(0, index_encontrado - 50)
+                    fim_ctx = min(total_chars, index_encontrado + len(nome_busca) + 50)
                     contexto = texto_pdf_norm[inicio_ctx:fim_ctx]
                     
-                    # Limpa o contexto para sobrar só números e ver se o CPF está lá
+                    # Limpa contexto para manter só números
                     contexto_numerico = re.sub(r'\D', '', contexto)
                     
-                    if miolo_cpf in contexto_numerico:
-                        status = "✅ Aprovado (Nome + CPF Confirmados)"
-                        obs = "Documento encontrado próximo ao nome no PDF."
+                    # Verifica se ALGUM fragmento está presente no contexto
+                    match_cpf = False
+                    frag_encontrado = ""
+                    
+                    for frag in fragmentos:
+                        if frag in contexto_numerico:
+                            match_cpf = True
+                            frag_encontrado = frag
+                            break # Achou um, já vale
+                    
+                    if match_cpf:
+                        status = "✅ Aprovado (Confirmado)"
+                        obs = f"Nome encontrado e parte do CPF ({frag_encontrado}) identificada próxima."
                     else:
-                        status = "⚠️ Verificar (Nome encontrado, CPF não batendo)"
-                        obs = f"Nome está na lista, mas o trecho '{miolo_cpf}' do CPF não foi achado perto."
+                        status = "⚠️ Verificar (CPF Divergente)"
+                        obs = "Nome encontrado, mas nenhum trecho do CPF foi achado por perto."
                 else:
                     status = "✅ Aprovado (Nome encontrado)"
-                    obs = "Aluno sem CPF cadastrado para validação cruzada."
+                    obs = "CPF do aluno inválido/incompleto, validado apenas por nome."
             else:
                 status = "✅ Aprovado (Nome encontrado)"
                 obs = "Validação feita apenas por nome."
 
-        # Se não achou busca exata, e é só nome, poderíamos tentar fuzzy, 
-        # mas em PDF gigante fuzzy é perigoso e lento. Melhor manter busca exata 
-        # ou informar que não achou.
-        
         if match_encontrado:
             resultados.append({
                 "Aluno CPE": nome_original,
-                "Nome na Lista (Detectado)": nome_busca, # No PDF não extraímos o nome exato da lista, assumimos o achado
+                "Nome Detectado": nome_busca,
                 "Similaridade": f"{score}%",
                 "Status": status,
                 "Observação": obs
             })
 
     if not resultados:
-        return pd.DataFrame({"Resultado": ["Nenhum aluno encontrado no PDF."]})
+        return pd.DataFrame({"Resultado": ["Nenhum aluno encontrado no arquivo enviado."]})
         
     return pd.DataFrame(resultados).sort_values(by="Status")
 
@@ -156,35 +169,28 @@ def buscar_em_texto_corrido(df_alunos, texto_pdf_norm, col_nome, col_cpf, usar_v
 # ==========================================
 
 def processar_conferencia(arquivo_alunos, arquivo_lista, usar_cpf=False):
-    """
-    Função inteligente que detecta se a lista oficial é Excel/CSV ou PDF
-    e direciona para a lógica correta.
-    """
-    
     # 1. Carregar Alunos
     df_alunos = carregar_dataframe(arquivo_alunos)
     col_nome_aluno, col_cpf_aluno = identificar_colunas(df_alunos)
     
     if not col_nome_aluno:
-        return pd.DataFrame({"Erro": ["Não consegui identificar a coluna de nomes no arquivo de alunos."]})
+        return pd.DataFrame({"Erro": ["Não identifiquei a coluna de nomes no arquivo de alunos."]})
 
     # 2. Verificar tipo da Lista Oficial
     nome_arquivo_lista = arquivo_lista.name.lower()
     
-    # --- ROTA A: O usuário subiu um PDF (Usa a lógica nova "Bag of Words") ---
+    # ROTA A: PDF (Texto Corrido)
     if nome_arquivo_lista.endswith('.pdf'):
         texto_pdf = carregar_texto_pdf(arquivo_lista)
         if not texto_pdf:
-            return pd.DataFrame({"Erro": ["Não foi possível ler o texto desse PDF. Ele pode ser uma imagem escaneada."]})
-            
+            return pd.DataFrame({"Erro": ["PDF ilegível (pode ser imagem)."]})
         return buscar_em_texto_corrido(df_alunos, texto_pdf, col_nome_aluno, col_cpf_aluno, usar_cpf)
 
-    # --- ROTA B: O usuário subiu Excel/CSV (Usa a lógica antiga de comparação linha a linha) ---
+    # ROTA B: Excel/CSV (Comparação Linha a Linha - Mantida igual)
     else:
         df_oficial = carregar_dataframe(arquivo_lista)
         col_nome_lista, col_cpf_lista = identificar_colunas(df_oficial)
         
-        # Preparação para fuzzy matching
         lista_nomes_oficial_norm = [normalizar_texto(x) for x in df_oficial[col_nome_lista].dropna()]
         lista_nomes_oficial_orig = df_oficial[col_nome_lista].dropna().tolist()
         
@@ -193,16 +199,9 @@ def processar_conferencia(arquivo_alunos, arquivo_lista, usar_cpf=False):
         for idx, row in df_alunos.iterrows():
             nome_aluno_real = str(row[col_nome_aluno])
             nome_aluno_busca = normalizar_texto(nome_aluno_real)
-            
             if len(nome_aluno_busca) < 4: continue
 
-            # Busca Fuzzy
-            match = process.extractOne(
-                nome_aluno_busca, 
-                lista_nomes_oficial_norm, 
-                scorer=fuzz.token_sort_ratio, 
-                score_cutoff=85
-            )
+            match = process.extractOne(nome_aluno_busca, lista_nomes_oficial_norm, scorer=fuzz.token_sort_ratio, score_cutoff=85)
 
             if match:
                 nome_encontrado_norm, score, index_match = match
@@ -216,17 +215,24 @@ def processar_conferencia(arquivo_alunos, arquivo_lista, usar_cpf=False):
                     doc_aluno = limpar_numeros(row[col_cpf_aluno])
                     doc_lista = limpar_numeros(df_oficial.iloc[index_match][col_cpf_lista])
                     
-                    if doc_aluno and doc_lista and (doc_aluno in doc_lista or doc_lista in doc_aluno):
+                    # Tenta achar qualquer pedaço do CPF
+                    fragmentos = obter_fragmentos_cpf(doc_aluno)
+                    match_doc = False
+                    if fragmentos:
+                        for frag in fragmentos:
+                            if frag in doc_lista:
+                                match_doc = True
+                                break
+                    
+                    if match_doc:
                         status = "✅ Aprovado"
                         obs = "Nome e Documento conferem."
                         adicionar = True
                     else:
                         status = "⚠️ Verificar Homônimo"
                         obs = "Nome bate, mas documento diverge."
-                        # Se similaridade for muito alta, mostra mesmo assim para humano decidir
                         if score >= 98: adicionar = True
                 else:
-                    # Sem CPF
                     if score >= 95:
                         status = "✅ Aprovado"
                         adicionar = True
@@ -245,10 +251,8 @@ def processar_conferencia(arquivo_alunos, arquivo_lista, usar_cpf=False):
 
         if not resultados:
             return pd.DataFrame({"Resultado": ["Nenhum match encontrado."]})
-            
         return pd.DataFrame(resultados).sort_values(by="Status")
 
-# Mantemos a função antiga de extração de tabela apenas para a aba secundária do app, se quiser usar
 def extrair_tabela_pdf(arquivo_pdf):
     reader = PdfReader(arquivo_pdf)
     dados = []
