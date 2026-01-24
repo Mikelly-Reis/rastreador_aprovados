@@ -1,0 +1,6 @@
+[server]
+maxUploadSize = 1000  # Aumenta o limite para 1GB
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
