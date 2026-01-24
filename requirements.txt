@@ -7,3 +7,4 @@ unidecode
 tqdm
 streamlit_extras
 pypdf
+pdfplumber
