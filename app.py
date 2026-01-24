@@ -10,7 +10,6 @@ if "df_resultado_conferencia" not in st.session_state:
 def realiza_conferencia():
     if arquivo_lista_alunos and arquivo_lista_vestibular:
         with st.spinner('Lendo arquivos e cruzando dados... Isso pode levar alguns segundos.'):
-            # Chama o backend passando a opção escolhida
             st.session_state.df_resultado_conferencia = backend.processar_conferencia(
                 arquivo_lista_alunos,
                 arquivo_lista_vestibular,
@@ -26,17 +25,22 @@ st.set_page_config(
     layout="centered"
 )
 
-# Estilização CSS
+# Estilização CSS (Ajustada para suportar Modo Claro e Escuro)
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
+
+/* Fonte global, mas SEM forçar a cor branca (o tema define isso agora) */
 html, body, [data-testid="stAppViewContainer"], .stApp {
   font-family: 'Poppins', sans-serif !important;
-  color: #ffffff;
 }
+
+/* Título: Removemos a cor fixa para ele aparecer preto no modo claro */
 .titulo {
-  font-weight: 800; font-size: 28px !important; color: #ffffff !important; margin: 0;
+  font-weight: 800; font-size: 28px !important; margin: 0;
 }
+
+/* Botão continua laranja com texto branco */
 div.stButton > button {
   background-color: #ef7b17 !important; color: white !important; border-radius: 8px !important;
 }
@@ -51,9 +55,10 @@ with col_titulo:
  st.markdown("<h2 class='titulo'> Rastreador de<br>Aprovados Universal</h2>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL ---
+# Aqui adicionamos 'color: white' para garantir que DENTRO do fundo azul o texto seja sempre branco
 with stylable_container(
     key="meu_card",
-    css_styles="{background-color: #15355B; border-radius: 15px; padding: 30px;}"
+    css_styles="{background-color: #15355B; border-radius: 15px; padding: 30px; color: white;}"
 ):
     st.markdown('<h3 style="color:white;">Conferência de Listas</h3>', unsafe_allow_html=True)
     st.info("Agora aceita arquivos PDF e TXT diretamente! O sistema buscará o nome dos alunos dentro do arquivo da lista oficial.")
@@ -80,7 +85,6 @@ with stylable_container(
 
     with col2:
         st.markdown('**2. Lista Oficial**')
-        # ATENÇÃO: Adicionei "txt" aqui na lista de tipos aceitos
         arquivo_lista_vestibular = st.file_uploader(
             "Upload Lista Oficial", 
             type=["csv", "xlsx", "pdf", "txt"], 
