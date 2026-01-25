@@ -1,3 +1,5 @@
+[![Keep Alive Streamlit](https://github.com/cursinhoeachusp/rastreador_aprovados/actions/workflows/main.yml/badge.svg)](https://github.com/cursinhoeachusp/rastreador_aprovados/actions/workflows/main.yml)
+
 <div align="center">
 
 # Rastreador de aprovados | CPE
