@@ -52,7 +52,7 @@ col_img, col_titulo = st.columns([1, 9], vertical_alignment="center")
 with col_img:
    st.image("logo.png", width=120)
 with col_titulo:   
- st.markdown("<h2 class='titulo'> Rastreador de<br>Aprovados Universal</h2>", unsafe_allow_html=True)
+ st.markdown("<h2 class='titulo'> Rastreador de<br>Aprovados</h2>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL ---
 # Aqui adicionamos 'color: white' para garantir que DENTRO do fundo azul o texto seja sempre branco
@@ -100,4 +100,5 @@ with stylable_container(
     # Exibição dos Resultados
     if st.session_state.df_resultado_conferencia is not None:
         st.write("### Resultado da Análise:")
+
         st.dataframe(st.session_state.df_resultado_conferencia, use_container_width=True)
