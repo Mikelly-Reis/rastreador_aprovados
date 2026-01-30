@@ -99,69 +99,118 @@ def carregar_texto_txt(arquivo_txt):
     return normalizar_texto(conteudo)
 
 def buscar_em_texto_corrido(df_alunos, texto_norm, col_nome, col_cpf, usar_validacao_cpf):
-    """Busca otimizada no textão extraído."""
+    """
+    Busca no texto extraído.
+    Regra de Ouro: Match parcial de nome (cortado) só é aceito se o CPF confirmar.
+    """
     resultados = []
     total_chars = len(texto_norm)
 
+    # Pré-cálculo para não fazer dentro do loop se não for usar
+    tem_cpf_na_planilha = col_cpf is not None
+    pode_fazer_busca_parcial = usar_validacao_cpf and tem_cpf_na_planilha
+
     for idx, row in df_alunos.iterrows():
-        nome_original = row[col_nome]
+        nome_original = str(row[col_nome])
         nome_busca = normalizar_texto(nome_original)
         
         if len(nome_busca) < 4: continue 
 
+        # ---------------------------------------------------------
+        # FASE 1: TENTATIVA DE MATCH (EXATO OU PARCIAL)
+        # ---------------------------------------------------------
         index_encontrado = texto_norm.find(nome_busca)
-        
-        if index_encontrado != -1:
-            match_cpf = False
-            frag_encontrado = ""
-            status = ""
-            obs = ""
-            
-            # Validação de CPF (Opcional)
-            if usar_validacao_cpf and col_cpf:
-                cpf_aluno = row[col_cpf]
-                fragmentos = obter_fragmentos_cpf(cpf_aluno)
-                
-                if fragmentos:
-                    inicio = max(0, index_encontrado - 50)
-                    fim = min(total_chars, index_encontrado + len(nome_busca) + 50)
-                    contexto_numerico = re.sub(r'\D', '', texto_norm[inicio:fim])
-                    
-                    for frag in fragmentos:
-                        if frag in contexto_numerico:
-                            match_cpf = True
-                            frag_encontrado = frag
-                            break
-                    
-                    if match_cpf:
-                        status = "✅ Aprovado (Confirmado)"
-                        obs = f"Nome e fragmento CPF ({frag_encontrado}) encontrados."
-                    else:
-                        status = "⚠️ Verificar (CPF Divergente)"
-                        obs = "Nome encontrado, mas CPF não bateu no contexto."
-                else:
-                    status = "✅ Aprovado (Nome encontrado)"
-                    obs = "Sem CPF para validar."
-            else:
-                status = "✅ Aprovado (Nome encontrado)"
-                obs = "Validação apenas por nome."
+        tipo_match = "Exato"
+        match_confirmado = False # Flag para saber se validamos o achado
 
+        # Se não achou exato, tenta parcial SOMENTE se tiver CPF para validar depois
+        if index_encontrado == -1 and len(nome_busca) > 20 and pode_fazer_busca_parcial:
+            nome_parcial = nome_busca[:20] 
+            index_possivel = texto_norm.find(nome_parcial)
+            
+            if index_possivel != -1:
+                # Achamos um potencial candidato pelo nome curto.
+                # Agora PRECISAMOS validar o CPF. Se não bater, ignoramos este index.
+                index_encontrado = index_possivel
+                tipo_match = "Parcial (Restrito)"
+        
+        # Se após as tentativas ainda for -1, pula para o próximo aluno
+        if index_encontrado == -1:
+            continue
+
+        # ---------------------------------------------------------
+        # FASE 2: VALIDAÇÃO DE CONTEXTO (CPF)
+        # ---------------------------------------------------------
+        match_cpf = False
+        frag_encontrado = ""
+        status = ""
+        obs = ""
+        
+        # Vamos buscar o CPF perto de onde achamos o nome
+        if usar_validacao_cpf and tem_cpf_na_planilha:
+            cpf_aluno = row[col_cpf]
+            fragmentos = obter_fragmentos_cpf(cpf_aluno)
+            
+            if fragmentos:
+                # Janela de busca: 50 chars antes e projete o tamanho do nome original para frente
+                inicio = max(0, index_encontrado - 50)
+                fim = min(total_chars, index_encontrado + len(nome_busca) + 80)
+                
+                contexto_numerico = re.sub(r'\D', '', texto_norm[inicio:fim])
+                
+                for frag in fragmentos:
+                    if frag in contexto_numerico:
+                        match_cpf = True
+                        frag_encontrado = frag
+                        break
+        
+        # ---------------------------------------------------------
+        # FASE 3: DECISÃO FINAL (A TRAVA DE SEGURANÇA)
+        # ---------------------------------------------------------
+
+        # CASO 1: Busca foi PARCIAL (Nome cortado)
+        if tipo_match == "Parcial (Restrito)":
+            if match_cpf:
+                status = "✅ Aprovado (Nome Cortado)"
+                obs = f"Nome longo identificado pelos primeiros 20 chars + CPF ({frag_encontrado}) confirmado."
+                match_confirmado = True
+            else:
+                # AQUI ESTÁ A SEGURANÇA:
+                # Achou o nome "Enzo Slechticius..." cortado, mas o CPF não bateu?
+                # Então NÃO é ele. Ignora e finge que não achou.
+                match_confirmado = False 
+
+        # CASO 2: Busca foi EXATA (Nome completo)
+        else:
+            match_confirmado = True # Se achou o nome exato, já consideramos válido mostrar
+            if match_cpf:
+                status = "✅ Aprovado"
+                obs = f"Nome completo e CPF ({frag_encontrado}) conferem."
+            elif usar_validacao_cpf:
+                status = "⚠️ Verificar (CPF Divergente)"
+                obs = "Nome completo encontrado, mas CPF não bateu no contexto."
+            else:
+                status = "✅ Aprovado (Apenas Nome)"
+                obs = "Validação feita apenas por nome exato."
+
+        # Só adiciona na lista se passou pelo crivo
+        if match_confirmado:
             resultados.append({
                 "Aluno CPE": nome_original,
-                "Nome Detectado": nome_busca,
-                "Similaridade": "100%",
+                "Nome Detectado": nome_busca if tipo_match == "Exato" else nome_busca[:20] + "...",
+                "Similaridade": "100%" if tipo_match == "Exato" else "Parcial+CPF",
                 "Status": status,
                 "Observação": obs
             })
 
-    # Limpeza final pós-processamento
+    # Limpeza final e retorno
     gc.collect()
     
     if not resultados:
         return pd.DataFrame({"Resultado": ["Nenhum aluno encontrado."]})
         
     return pd.DataFrame(resultados).sort_values(by="Status")
-
+    
 # ==========================================
 # CONTROLADOR PRINCIPAL
 # ==========================================
